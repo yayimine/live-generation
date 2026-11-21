@@ -16,6 +16,7 @@ namespace CubeCoachGame
         private readonly Sprite square;
         private readonly Transform player;
         private readonly List<GameObject> goals = new();
+        private readonly List<GameObject> obstacles = new();
         private int shownHits;
 
         internal ArenaView(Transform parent)
@@ -69,6 +70,19 @@ namespace CubeCoachGame
             {
                 goals.Add(Box("Yellow goal", new Vector2(point.x, point.y),
                     Vector2.one * ArenaRules.GoalSize, Gold, 2));
+            }
+
+            foreach (var obstacle in obstacles)
+            {
+                obstacle.SetActive(false);
+                Object.Destroy(obstacle);
+            }
+            obstacles.Clear();
+            if (level.obstacles != null)
+            {
+                foreach (var point in level.obstacles)
+                    obstacles.Add(Box("Obstacle", new Vector2(point.x, point.y),
+                        Vector2.one * ArenaRules.ObstacleSize, new Color(0.40f, 0.48f, 0.57f), 1));
             }
 
             player.position = Vector3.zero;

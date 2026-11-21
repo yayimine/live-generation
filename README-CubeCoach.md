@@ -5,6 +5,8 @@ and press **Play**. The runtime bootstrap creates the arena automatically.
 WASD moves the cyan player cube; touch all yellow goal cubes. Enter ends a run
 early. A run also ends after its time limit. Click **Play generated level**
 after the local coach returns its rating, feedback, description, and goal layout.
+Each practice run places four goals at random. Every arena also places three
+to five solid gray blocks, with clearance around the spawn and goals.
 
 ## Game code
 
@@ -72,7 +74,8 @@ No model or adapter has been trained or benchmarked as part of this prototype.
 All input events are sent to the model; oversized contexts are rejected rather
 than silently truncated. Generation is capped at 650 new tokens. Invalid JSON,
 out-of-bounds, overlapping, or spawn-adjacent goals are rejected with a retry
-option. Level coordinates are constrained to an obstacle-free reachable arena.
+option. The game places isolated blocks after validating the goal coordinates and records
+the block centers with the replay. Older replays may omit obstacles.
 Slow CPU inference may exceed Unity's 180-second request timeout.
 
 ## Checks

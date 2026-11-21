@@ -47,3 +47,31 @@ The downloaded model and environment are excluded from Git. Use the preparation 
 ## Verification on this device
 
 The downloaded revision is recorded in `model-source.json`. Model inference ran on Apple MPS and returned a schema-valid rating and next-level layout for a synthetic replay. A single LoRA optimizer step completed and its saved adapter reloaded successfully. That disposable adapter is at `/private/tmp/cube-coach-smoke-adapter`; the launchers use the base model until you train `adapters/cube-coach` from real labels. Five protocol tests and a temporary replay-import/dataset-export check passed. The default Unity replay directory was empty or absent during setup. The project's development HTTP setting is enabled for the local server connection.
+
+## Desktop app
+
+Double-click **Cube Coach Studio.app** in the Unity project folder. Keep the app next to `LocalCoach`.
+
+- **Import replays** selects the Unity Runs folder. **Refresh** reloads imported data.
+- Select a run to inspect its recorded positions, goal layout, and full JSON.
+- Enter a rating, feedback, proposed level, split, and session group, then **Save label**.
+- **Export datasets** validates the saved labels and produces train/test JSONL.
+- **Train new adapter** exports labels first and starts training into a new timestamped folder. Training output appears at the bottom.
+- **Start coach** can use the base model or an adapter folder you choose. **Stop job** ends a job started by Studio.
+
+Studio runs one training or coach job at a time. Stop a separately launched coach before starting another on the same port. A route preview joins positions captured at input changes, so use the full replay JSON when judging timing or boundary contacts. The project-local model and ML environment are required for training and inference. The app includes its own GUI runtime. To rebuild the app, run `.venv/bin/python build_studio.py` from `LocalCoach` with PyInstaller installed.
+
+### Collect runs inside Studio
+
+Click **Play & collect…**, then **Start practice**. Move with WASD and collect the
+yellow goals and steer around the solid gray blocks. Practice goals and blocks
+are randomized each run. Coach layouts use the coach’s goal coordinates and
+receive randomized blocks. A run saves automatically when you collect all goals, the clock
+expires, or you press Enter. The saved run appears immediately in Studio and uses
+the same replay fields as imported Unity runs. Select it, save a label, then
+export or train with any mix of Studio and imported Unity runs.
+
+To collect runs on adapted layouts, first use **Start coach…** in Studio to load
+the base model or a trained adapter. After a run, click **Ask coach** and then
+**Play generated level** when a valid layout arrives. Coach feedback is displayed
+separately from the human label you save for training.

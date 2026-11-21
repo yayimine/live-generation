@@ -46,6 +46,11 @@ namespace CubeCoachGame
             const float limitY = ArenaRules.HalfHeight - ArenaRules.PlayerSize / 2;
             next.x = Mathf.Clamp(next.x, -limitX, limitX);
             next.y = Mathf.Clamp(next.y, -limitY, limitY);
+            // Resolve the axes separately so the player can slide along blocks.
+            if (Blocked(next.x, Position.y))
+                next.x = Position.x;
+            if (Blocked(next.x, next.y))
+                next.y = Position.y;
             Replay.distance += Vector2.Distance(Position, next);
             Position = next;
 
@@ -69,6 +74,18 @@ namespace CubeCoachGame
             Replay.completed = completed;
             Replay.endReason = completed ? "all_goals" : timedOut ? "timeout" : "enter";
             Replay.finalPosition = new Point(Position.x, Position.y);
+        }
+
+        private bool Blocked(float x, float y)
+        {
+            var obstacles = Replay.level.obstacles;
+            if (obstacles == null)
+                return false;
+            const float clearance = (ArenaRules.PlayerSize + ArenaRules.ObstacleSize) / 2;
+            foreach (var obstacle in obstacles)
+                if (Mathf.Abs(x - obstacle.x) < clearance && Mathf.Abs(y - obstacle.y) < clearance)
+                    return true;
+            return false;
         }
 
         private void RecordInput(int mask)

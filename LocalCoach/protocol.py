@@ -12,7 +12,10 @@ Return ONLY a JSON object with rating (integer), feedback (string), and nextLeve
 Use this exact JSON structure, with your own values:
 {"rating":7,"feedback":"Choose a route before moving.","nextLevel":{"title":"Two goals","description":"Collect the two goals on opposite sides.","seconds":35,"goals":[{"x":-5,"y":3},{"x":5,"y":-3}]}}
 nextLevel must be an object and goals must be an array of coordinate objects.
-The new arena has no obstacles; player starts at (0,0). Include 1 to 8 yellow
+The replay may include level.obstacles, which are solid 1.4-unit square blocks.
+Consider those blocks when evaluating the route. For the next level, specify goals;
+the game adds blocks with open routes around them. Player starts at (0,0).
+Include 1 to 8 yellow
 goals, each within x [-8,8], y [-4,4], at least 1.3 from origin and 1.4 apart.
 seconds must be 15 to 90, sufficient for the route. Describe exactly the level
 you generate. Adapt its challenge to demonstrated skill. Do not invent hits.'''

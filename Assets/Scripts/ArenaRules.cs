@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace CubeCoachGame
@@ -9,13 +10,53 @@ namespace CubeCoachGame
         internal const float PlayerSize = 0.64f;
         internal const float GoalSize = 0.68f;
 
-        internal static Level Practice() => new Level
+        internal const float ObstacleSize = 1.4f;
+
+        internal static Level Practice()
         {
-            title = "First contact",
-            description = "Collect every yellow cube. Find a clean route through the arena.",
-            seconds = 40,
-            goals = new[] { new Point(-5, 2), new Point(5, 3), new Point(5, -3), new Point(-4, -3) }
-        };
+            var candidates = new List<Point>();
+            for (int x = -8; x <= 8; x += 2)
+            for (int y = -4; y <= 4; y += 2)
+                if (x != 0 || y != 0)
+                    candidates.Add(new Point(x, y));
+
+            return new Level
+            {
+                title = "Practice",
+                description = "Collect all four yellow cubes and steer around the gray blocks.",
+                seconds = 40,
+                goals = Sample(candidates, 4)
+            };
+        }
+
+        internal static void PlaceObstacles(Level level)
+        {
+            // Centers are 3 units apart, leaving open corridors around every block.
+            var candidates = new List<Point>();
+            for (int x = -6; x <= 6; x += 3)
+            for (int y = -3; y <= 3; y += 3)
+            {
+                if (x == 0 && y == 0)
+                    continue;
+                if (System.Array.Exists(level.goals, goal =>
+                    Mathf.Abs(goal.x - x) < 1.45f && Mathf.Abs(goal.y - y) < 1.45f))
+                    continue;
+                candidates.Add(new Point(x, y));
+            }
+            level.obstacles = Sample(candidates, Random.Range(3, 6));
+        }
+
+        private static Point[] Sample(List<Point> candidates, int count)
+        {
+            var selected = new Point[Mathf.Min(count, candidates.Count)];
+            for (int i = 0; i < selected.Length; i++)
+            {
+                int index = Random.Range(0, candidates.Count);
+                selected[i] = candidates[index];
+                candidates.RemoveAt(index);
+            }
+            return selected;
+        }
 
         internal static bool IsValidReview(Review review)
         {

@@ -42,6 +42,7 @@ namespace CubeCoachGame
 
         private void StartLevel(Level level)
         {
+            ArenaRules.PlaceObstacles(level);
             session = new RunSession(level);
             arena.ShowLevel(level);
             review = null;

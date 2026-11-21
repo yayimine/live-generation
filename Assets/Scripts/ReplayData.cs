@@ -20,7 +20,7 @@ namespace CubeCoachGame
     {
         public string title, description;
         public float seconds = 40;
-        public Point[] goals;
+        public Point[] goals, obstacles;
     }
 
     [Serializable]

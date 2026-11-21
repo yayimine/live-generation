@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+adapters/
+models/
+macos-runtime/
+.macos-prepare-*/
+.python/
+data/
+training-environment.txt

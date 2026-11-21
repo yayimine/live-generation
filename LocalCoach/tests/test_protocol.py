@@ -25,4 +25,24 @@ class ProtocolTests(unittest.TestCase):
         import json
         self.assertEqual(json.loads(messages(run)[1]['content']), run)
 
+    def test_condensed_replay_retains_hits_and_aggregates_all_masks(self):
+        import json
+        run = {
+            "id": "long",
+            "level": {"goals": [{"x": 2, "y": 0}], "seconds": 40},
+            "hits": [{"time": 2.5, "goal": 0}],
+            "inputs": [{"time": 0, "mask": 8}, {"time": 1, "mask": 0},
+                       {"time": 2, "mask": 8}],
+            "duration": 2.5,
+            "distance": 3,
+            "completed": True,
+        }
+        original = copy.deepcopy(run)
+        payload = json.loads(messages(run, rating_only=True, condensed=True)[1]["content"])
+        self.assertEqual(payload["input_summary"],
+                         {"event_count": 3, "seconds_by_mask": {"0": 1.0, "8": 1.5}})
+        self.assertEqual(payload["hits"], run["hits"])
+        self.assertNotIn("inputs", payload)
+        self.assertEqual(run, original)
+
 if __name__ == '__main__': unittest.main()

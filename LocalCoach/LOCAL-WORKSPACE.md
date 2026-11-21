@@ -20,9 +20,11 @@ If Unity saved elsewhere, use `collect --source "/path/to/Runs"`. Import skips m
 .venv/bin/python workspace.py label RUN_ID
 ```
 
-The command displays the replay, then asks for your rating, feedback, next-level description, timer, goal coordinates, train/test split, and player/session group. Use the rubric in `../WINDOWS-TRAINING.md`. Coordinates must be valid JSON. For example, `[{"x":-5,"y":3},{"x":5,"y":-3}]`. Keep the same player's or session's runs in one split. Export checks the group names for leakage.
+The command displays the replay and asks for a whole-number rating from 1 to 10.
+The split defaults to training. A session group is optional. When provided,
+keep the same group in one split. Use the rubric in `../WINDOWS-TRAINING.md`.
 
-4. Label both training and held-out runs, then export.
+4. Rate at least one training run, then export. Hold out test runs to evaluate quality.
 
 ```sh
 .venv/bin/python workspace.py export
@@ -54,10 +56,10 @@ Double-click **Cube Coach Studio.app** in the Unity project folder. Keep the app
 
 - **Import replays** selects the Unity Runs folder. **Refresh** reloads imported data.
 - Select a run to inspect its recorded positions, goal layout, and full JSON.
-- Enter a rating, feedback, proposed level, split, and session group, then **Save label**.
+- Enter a rating from 1 to 10, then **Save label**. The split defaults to training and the session group is optional.
 - **Export datasets** validates the saved labels and produces train/test JSONL.
 - **Train new adapter** exports labels first and starts training into a new timestamped folder. Training output appears at the bottom.
-- **Start coach** can use the base model or an adapter folder you choose. **Stop job** ends a job started by Studio.
+- **Start coach** loads the recovered adapter by default. Use **Coach options** to choose another adapter or the base model. **Stop job** ends a job started by Studio.
 
 Studio runs one training or coach job at a time. Stop a separately launched coach before starting another on the same port. A route preview joins positions captured at input changes, so use the full replay JSON when judging timing or boundary contacts. The project-local model and ML environment are required for training and inference. The app includes its own GUI runtime. To rebuild the app, run `.venv/bin/python build_studio.py` from `LocalCoach` with PyInstaller installed.
 
@@ -71,7 +73,45 @@ expires, or you press Enter. The saved run appears immediately in Studio and use
 the same replay fields as imported Unity runs. Select it, save a label, then
 export or train with any mix of Studio and imported Unity runs.
 
-To collect runs on adapted layouts, first use **Start coach…** in Studio to load
-the base model or a trained adapter. After a run, click **Ask coach** and then
+To collect runs on adapted layouts, first use **Coach options** in Studio to load
+the base model or an adapter that generates layouts. After a run, click **Ask coach** and then
 **Play generated level** when a valid layout arrives. Coach feedback is displayed
 separately from the human label you save for training.
+
+Adapters trained with rating-only labels return a score. Start the base coach to collect model-generated layouts.
+
+
+### Label a batch
+
+Click **Label next run** to start the queue. Set the split and optional session
+group on an unlabeled run to reuse them for the batch. With the replay list
+focused, press **1–9** or **0** for 10 to save and advance. **Space** skips the
+run for this session. **Undo** restores the previous label or returns a newly
+rated run to the queue. **Reset skipped runs** brings manually skipped runs back.
+
+The review shows goals hit, time used, distance, and the route. Click the
+suggested rating to fill it in, then adjust it or confirm with **Enter**. The
+suggestion uses goal completion and time, with a default route point when the
+player moved. **Skip near-duplicates** compares unlabeled runs against labeled
+ones on the same layout. It uses goal order, outcome, time, distance, and
+recorded positions. Turn it off to include those runs in the queue.
+
+### Compare the coach with the rubric
+
+Studio shows idle input time, distance traveled, and the length of a reference
+route around obstacles through the centers of the goals you hit, in order.
+For completed runs the rubric uses estimated route efficiency alongside
+completion and time. Players can collect a goal before reaching its center and
+move in eight directions, so the efficiency figure is an estimate. The
+suggested rating remains editable.
+
+For a fair comparison, rate runs from held-out sessions, put them in **test**,
+and export. Click **Evaluate ratings…** and choose the base model or an adapter.
+The report in `data/evaluations` contains the rubric and model scores against
+human labels, response times, valid reply count, and rating errors on matching
+runs. Studio rejects matching train/test run IDs in the current exports.
+Choose an adapter that has never trained on the test runs.
+
+New adapters train with the run summary and receive it at inference. Earlier
+adapters keep their original prompt. Retrain on your labeled runs to use
+the summary with a LoRA adapter.

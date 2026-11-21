@@ -9,15 +9,18 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from labeling import layout_and_outcome, near_duplicate, suggested_rating
 from play_arena import OBSTACLE_SIZE, PlayArena
-from protocol import validate_review
+from protocol import validate_rating
 from workspace import read
-from studio_widgets import fit_window, scroll_form, text_panel
+from run_metrics import baseline_rating, summarize
+from studio_widgets import CopyText, fit_window, scroll_form, text_panel
 
 ROOT = (Path(sys.executable).resolve().parents[3] / "LocalCoach"
         if getattr(sys, "frozen", False) else Path(__file__).resolve().parent)
 PYTHON = ROOT / ".venv/bin/python"
 DATA = ROOT / "data"
+DEFAULT_ADAPTER = ROOT / "adapters" / "coach-20261120-230726-recovered"
 DEFAULT_RUNS = Path.home() / "Library/Application Support/DefaultCompany/live generation/Runs"
 
 
@@ -35,6 +38,10 @@ class Studio:
         self.loading = False
         self.run = None
         self.variables = {}
+        self.skipped = set()
+        self.undo_stack = []
+        self.batch = {"split": "train", "group": ""}
+        self.queue_active = False
         for folder in ("runs", "labels"):
             (DATA / folder).mkdir(parents=True, exist_ok=True)
         self.build()
@@ -69,10 +76,11 @@ class Studio:
         scroll.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self.select)
         self.tree.bind("<Command-c>", self.copy_replay_id)
+        self.tree.bind("<KeyPress>", self.queue_key)
 
-        right = ttk.Frame(main, padding=(12, 0))
-        main.add(right, weight=2)
-        tabs = ttk.Notebook(right)
+        review_panel = ttk.Frame(main, padding=(8, 0))
+        main.add(review_panel, weight=2)
+        tabs = self.tabs = ttk.Notebook(review_panel)
         tabs.pack(fill="both", expand=True)
         label = ttk.Frame(tabs)
         raw = ttk.Frame(tabs)
@@ -87,33 +95,51 @@ class Studio:
         ttk.Button(controls, text="Scoring guide", command=lambda: self.open_path(
             ROOT.parent / "WINDOWS-TRAINING.md")).pack(side="left", padx=8)
         ttk.Button(controls, text="Copy replay ID", command=self.copy_replay_id).pack(side="left")
+        queue_bar = ttk.Frame(label, padding=(8, 4))
+        queue_bar.pack(side="top", fill="x")
+        for title, action in (("Label next run", self.label_next), ("Skip", self.skip_run),
+                              ("Undo", self.undo_label)):
+            ttk.Button(queue_bar, text=title, command=action).pack(side="left", padx=(0, 3))
+        self.queue_caption = tk.StringVar(value="Label next run to start.")
+        ttk.Label(label, textvariable=self.queue_caption, padding=(8, 0)).pack(side="top", anchor="w")
         form = scroll_form(label)
         self.canvas = tk.Canvas(form, height=130, width=1, bg="#101c2b", highlightthickness=0)
         self.canvas.grid(row=0, column=0, columnspan=2, sticky="ew")
         self.canvas.bind("<Configure>", lambda _: self.draw())
         ttk.Label(form, text="Yellow goals · gray blocks · cyan route",
                   font=("Helvetica", 10)).grid(row=1, column=0, columnspan=2, sticky="w")
+        self.evidence = CopyText(form, height=4, width=1, font=("Helvetica", 11))
+        self.evidence.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.suggestion = tk.StringVar(value="Suggested rating")
+        self.suggest_button = ttk.Button(form, textvariable=self.suggestion,
+                                         command=self.use_suggestion, state="disabled")
+        self.suggest_button.grid(row=3, column=0, columnspan=2, sticky="w", pady=3)
+        self.ignore_duplicates = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="Skip near-duplicates", variable=self.ignore_duplicates).grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=3)
+        ttk.Button(form, text="Reset skipped runs", command=self.reset_skipped).grid(
+            row=8, column=0, columnspan=2, sticky="w")
         form.columnconfigure(1, weight=1)
         fields = [
-            ("rating", "Rating (1–10)", "7"),
-            ("feedback", "Feedback", ""),
-            ("title", "Next level title", ""),
-            ("description", "Level description", ""),
-            ("seconds", "Time limit (15–90)", "35"),
-            ("goals", 'Goals JSON', '[{"x":-5,"y":3},{"x":5,"y":-3}]'),
+            ("rating", "Rating (1–10)", ""),
             ("split", "Dataset split", "train"),
-            ("group", "Player / session group", ""),
+            ("group", "Session group (optional)", ""),
         ]
-        for row, (key, title, default) in enumerate(fields, start=2):
+        for row, (key, title, default) in enumerate(fields, start=4):
             ttk.Label(form, text=title).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)
             value = tk.StringVar(value=default)
             self.variables[key] = value
-            value.trace_add("write", self.changed)
+            value.trace_add("write", lambda *_, field=key: self.changed(field))
             if key == "split":
                 entry = ttk.Combobox(form, textvariable=value, values=("train", "test"), state="readonly")
             else:
                 entry = ttk.Entry(form, textvariable=value, width=12)
             entry.grid(row=row, column=1, sticky="ew", pady=3)
+        activity = ttk.LabelFrame(main, text="Activity log", padding=6)
+        main.add(activity, weight=2)
+        log_panel, self.log = text_panel(activity, width=21, height=3, font=("Menlo", 10))
+        log_panel.pack(fill="both", expand=True)
+
         bottom = ttk.LabelFrame(self.window, text="Datasets and training", padding=10)
         bottom.pack(fill="x", padx=12, pady=10)
         self.epochs = tk.StringVar(value="3")
@@ -126,23 +152,143 @@ class Studio:
         ttk.Entry(settings, textvariable=self.epochs, width=4).pack(side="left", padx=5)
         ttk.Label(settings, text="Context").pack(side="left")
         ttk.Entry(settings, textvariable=self.context, width=6).pack(side="left", padx=5)
+        ttk.Button(settings, text="Evaluate ratings…", command=self.evaluate).pack(side="left", padx=5)
+        coach_options = ttk.Menubutton(settings, text="Coach options")
+        menu = tk.Menu(coach_options, tearoff=False)
+        menu.add_command(label="Choose another adapter…", command=lambda: self.coach("choose"))
+        menu.add_command(label="Use base model", command=lambda: self.coach("base"))
+        coach_options.configure(menu=menu)
+        coach_options.pack(side="left", padx=5)
         for text, action in (("Export datasets", self.export),
                              ("Train new adapter", self.train),
-                             ("Start coach…", self.coach),
+                             ("Start coach", self.coach),
                              ("Stop job", self.stop),
                              ("Data folder", lambda: self.open_path(DATA))):
             ttk.Button(actions, text=text, command=action).pack(side="left", padx=(0, 3))
-        log_panel, self.log = text_panel(self.window, width=1, height=3, font=("Menlo", 10))
-        log_panel.pack(fill="x", padx=12, pady=(0, 6))
 
     def copy_replay_id(self, _event=None):
         if self.selected:
             self.raw.copy(self.selected.stem)
         return "break"
 
-    def changed(self, *_):
-        if not self.loading:
+    def changed(self, field):
+        if self.loading:
+            return
+        if field in self.batch and (self.selected is None or not self.label_path(self.selected).exists()):
+            self.batch[field] = self.variables[field].get().strip()
+        if self.selected is not None:
             self.dirty = True
+
+    @staticmethod
+    def label_path(path):
+        return DATA / "labels" / path.name
+
+    def use_suggestion(self):
+        if self.run:
+            self.variables["rating"].set(str(suggested_rating(self.run)))
+            if self.queue_active:
+                self.tree.focus_set()
+
+    def reset_skipped(self):
+        self.skipped.clear()
+        self.label_next()
+
+    def queue_key(self, event):
+        if not self.queue_active or self.selected is None or self.label_path(self.selected).exists():
+            return
+        if event.state & (0x4 | 0x8 | 0x10):
+            return
+        if event.char in "0123456789" and len(event.char) == 1:
+            self.variables["rating"].set(str(int(event.char) or 10))
+            self.save_label()
+            return "break"
+        if event.keysym == "Return" and self.variables["rating"].get():
+            self.save_label()
+            return "break"
+        if event.keysym == "space":
+            self.skip_run()
+            return "break"
+
+    def label_next(self):
+        if not self.discard():
+            return
+        self.dirty = False
+        self.queue_active = True
+        self.tabs.select(0)
+        labeled = {}
+        if self.ignore_duplicates.get():
+            for path in self.paths.values():
+                if not self.label_path(path).exists():
+                    continue
+                try:
+                    run = read(path)
+                    labeled.setdefault(layout_and_outcome(run), []).append(run)
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+        duplicates = 0
+        for row, path in self.paths.items():
+            if path in self.skipped or self.label_path(path).exists():
+                continue
+            if labeled:
+                try:
+                    run = read(path)
+                    if any(near_duplicate(run, other)
+                           for other in labeled.get(layout_and_outcome(run), [])):
+                        duplicates += 1
+                        continue
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+            self.tree.selection_set(row)
+            self.tree.see(row)
+            self.tree.focus(row)
+            self.select(None)
+            self.tree.focus_set()
+            self.queue_caption.set("1–9 rate · 0 = 10 · Space skips")
+            return
+        self.queue_active = False
+        self.queue_caption.set(f"Queue done · {len(self.skipped)} skipped · {duplicates} near-duplicates")
+
+    def skip_run(self):
+        if self.selected is None or not self.discard():
+            return
+        self.skipped.add(self.selected)
+        self.dirty = False
+        self.label_next()
+
+    def undo_label(self):
+        if not self.undo_stack or not self.discard():
+            return
+        path, previous, written = self.undo_stack[-1]
+        target = self.label_path(path)
+        try:
+            if not target.exists() or target.read_bytes() != written:
+                raise ValueError("The label changed outside Studio.")
+            if previous is None:
+                target.unlink()
+            else:
+                temporary = target.with_suffix(".tmp")
+                temporary.write_bytes(previous)
+                temporary.replace(target)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Could not undo", str(error))
+            return
+        self.undo_stack.pop()
+        self.dirty = False
+        self.selected = None
+        self.skipped.discard(path)
+        for row, candidate in self.paths.items():
+            if candidate == path:
+                self.tree.set(row, "label", read(target)["split"] if previous else "unlabeled")
+                self.tree.selection_set(row)
+                self.tree.see(row)
+                self.select(None)
+                self.tree.focus(row)
+                self.tree.focus_set()
+                if previous is None:
+                    self.queue_active = True
+                    self.queue_caption.set("1–9 rate · 0 = 10 · Space skips")
+                break
+        self.status.set(f"Undid label for {path.stem}")
 
     def discard(self):
         return not self.dirty or messagebox.askyesno("Unsaved label", "Discard unsaved label changes?")
@@ -156,6 +302,9 @@ class Studio:
         self.selected = None
         self.run = None
         self.raw.replace("")
+        self.evidence.replace("")
+        self.suggestion.set("Suggested rating")
+        self.suggest_button.configure(state="disabled")
         self.dirty = False
         labeled = 0
         for path in sorted((DATA / "runs").glob("*.json")):
@@ -195,16 +344,27 @@ class Studio:
             self.selected = path
             self.loading = True
             review = label["review"] if label else {}
-            level = review.get("nextLevel", {})
-            values = dict(rating=str(review.get("rating", 7)), feedback=review.get("feedback", ""),
-                          title=level.get("title", ""), description=level.get("description", ""),
-                          seconds=str(level.get("seconds", 35)),
-                          goals=json.dumps(level.get("goals", [{"x":-5,"y":3},{"x":5,"y":-3}])),
-                          split=label["split"] if label else "train",
-                          group=label["group"] if label else "")
+            values = dict(rating=str(review.get("rating", "")),
+                          split=label["split"] if label else self.batch["split"],
+                          group=label.get("group", "") if label else self.batch["group"])
             for key, value in values.items():
                 self.variables[key].set(value)
             self.raw.replace(json.dumps(run, indent=2))
+            summary = summarize(run)
+            reference = summary["reference_goal_center_units"]
+            efficiency = summary["route_efficiency_estimate"]
+            distance = summary["distance_units"]
+            route_text = f"{distance:g} units traveled" if distance is not None else "Distance unavailable"
+            if reference is not None:
+                route_text += f" · {reference:g} via hit goal centers"
+            if efficiency is not None:
+                route_text += f" · {efficiency:.0%} estimated efficiency"
+            self.evidence.replace(
+                f"{summary['goals_hit']}/{summary['goals_total']} goals · "
+                f"{summary['time_seconds']:g}/{summary['time_limit_seconds']:g}s · "
+                f"{summary['idle_input_seconds']:g}s idle input\n{route_text}")
+            self.suggestion.set(f"Use rubric suggestion {baseline_rating(summary)}/10")
+            self.suggest_button.configure(state="normal")
             self.dirty = False
             self.draw()
         except (ValueError, KeyError, TypeError, OSError) as error:
@@ -247,25 +407,27 @@ class Studio:
             return
         try:
             values = {key: value.get().strip() for key, value in self.variables.items()}
-            review = validate_review(dict(rating=int(values["rating"]), feedback=values["feedback"],
-                nextLevel=dict(title=values["title"], description=values["description"],
-                               seconds=float(values["seconds"]), goals=json.loads(values["goals"]))))
-            if not values["group"]:
-                raise ValueError("Enter a player/session group.")
-            for path in (DATA / "labels").glob("*.json"):
-                if path.name == self.selected.name:
-                    continue
-                other = read(path)
-                if other["group"] == values["group"] and other["split"] != values["split"]:
-                    raise ValueError("This group already has labels in the other dataset split.")
-            target = DATA / "labels" / self.selected.name
+            review = validate_rating({"rating": int(values["rating"])})
+            if values["group"]:
+                for path in (DATA / "labels").glob("*.json"):
+                    if path.name == self.selected.name:
+                        continue
+                    other = read(path)
+                    if other.get("group") == values["group"] and other["split"] != values["split"]:
+                        raise ValueError("This group already has labels in the other dataset split.")
+            target = self.label_path(self.selected)
+            previous = target.read_bytes() if target.exists() else None
             temporary = target.with_suffix(".tmp")
             temporary.write_text(json.dumps(dict(review=review, split=values["split"],
                                                   group=values["group"]), indent=2), encoding="utf-8")
+            written = temporary.read_bytes()
             temporary.replace(target)
+            self.undo_stack.append((self.selected, previous, written))
             self.dirty = False
             self.tree.set(self.tree.selection()[0], "label", values["split"])
             self.status.set(f"Saved label for {self.selected.stem}")
+            if self.queue_active:
+                self.label_next()
         except (ValueError, KeyError, TypeError, OSError) as error:
             messagebox.showerror("Label needs attention", str(error))
 
@@ -306,22 +468,57 @@ class Studio:
         except (ValueError, OSError) as error:
             messagebox.showerror("Training could not start", str(error))
 
-    def coach(self):
+    def evaluate(self):
         if self.busy():
             return
-        use_adapter = messagebox.askyesnocancel("Local coach",
-            "Load a trained LoRA adapter?\nYes: choose an adapter folder\nNo: use the base model")
+        test = DATA / "test.jsonl"
+        if not test.exists() or not test.stat().st_size:
+            messagebox.showinfo("Held-out ratings needed", "Label some test runs and export the datasets first.")
+            return
+        use_adapter = messagebox.askyesnocancel("Evaluate ratings",
+            "Evaluate a trained adapter?\nYes: choose an adapter folder\nNo: evaluate the base model")
         if use_adapter is None:
             return
-        command = [str(PYTHON), "-u", "server.py", "--model", "models/qwen2.5-0.5b-instruct"]
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        command = [str(PYTHON), "-u", "evaluate_coach.py", "--model",
+                   "models/qwen2.5-0.5b-instruct", "--output",
+                   str(DATA / "evaluations" / f"ratings-{stamp}.json")]
         if use_adapter:
-            folder = filedialog.askdirectory(title="Choose adapter folder", initialdir=str(ROOT))
-            if not folder:
+            folder = self.choose_adapter()
+            if folder is None:
                 return
-            if not (Path(folder) / "adapter_model.safetensors").is_file():
-                messagebox.showerror("Invalid adapter", "Choose a folder with adapter_model.safetensors.")
+            command += ["--adapter", str(folder)]
+        self.start_job(command, "Evaluation")
+
+    @staticmethod
+    def is_adapter(folder):
+        return all((folder / name).is_file()
+                   for name in ("adapter_model.safetensors", "adapter_config.json"))
+
+    def choose_adapter(self):
+        starting_folder = DEFAULT_ADAPTER if self.is_adapter(DEFAULT_ADAPTER) else ROOT / "adapters"
+        path = filedialog.askdirectory(title="Choose adapter folder",
+                                       initialdir=str(starting_folder if starting_folder.is_dir() else ROOT))
+        if not path:
+            return None
+        folder = Path(path)
+        if not self.is_adapter(folder):
+            messagebox.showerror("Invalid adapter",
+                                 "Choose a folder with adapter_model.safetensors and adapter_config.json.")
+            return None
+        return folder
+
+    def coach(self, selection="default"):
+        if self.busy():
+            return
+        command = [str(PYTHON), "-u", "server.py", "--model", "models/qwen2.5-0.5b-instruct"]
+        if selection != "base":
+            folder = DEFAULT_ADAPTER
+            if selection == "choose" or not self.is_adapter(folder):
+                folder = self.choose_adapter()
+            if folder is None:
                 return
-            command += ["--adapter", folder]
+            command += ["--adapter", str(folder)]
         self.start_job(command, "Coach")
 
     def busy(self):

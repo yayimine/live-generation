@@ -55,7 +55,7 @@ namespace CubeCoachGame
     public class Review
     {
         public int rating;
-        public string feedback, source;
+        public string feedback, source, notice;
         public Level nextLevel;
     }
 }

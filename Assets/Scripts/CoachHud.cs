@@ -62,10 +62,16 @@ namespace CubeCoachGame
             reviewScroll = GUILayout.BeginScrollView(reviewScroll, GUILayout.ExpandHeight(true));
             if (review != null)
             {
-                GUILayout.Label(review.feedback, body);
-                GUILayout.Space(18);
-                GUILayout.Label("NEXT / " + review.nextLevel.title, body);
-                GUILayout.Label(review.nextLevel.description, body);
+                if (!string.IsNullOrWhiteSpace(review.feedback))
+                    GUILayout.Label(review.feedback, body);
+                if (!string.IsNullOrWhiteSpace(review.notice))
+                    GUILayout.Label(review.notice, body);
+                if (review.nextLevel != null)
+                {
+                    GUILayout.Space(18);
+                    GUILayout.Label("NEXT / " + review.nextLevel.title, body);
+                    GUILayout.Label(review.nextLevel.description, body);
+                }
             }
             else
             {
@@ -78,7 +84,7 @@ namespace CubeCoachGame
             Action action = Action.None;
             if (!waiting)
             {
-                if (review != null && GUILayout.Button("Play generated level  →", button))
+                if (review?.nextLevel != null && GUILayout.Button("Play generated level  →", button))
                     action = Action.NextLevel;
                 if (review == null && GUILayout.Button("Retry local coach", button))
                     action = Action.Retry;

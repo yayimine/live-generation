@@ -5,8 +5,10 @@ import os
 import queue
 import sys
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from protocol import messages, validate_review
+from protocol import messages, validate_rating, validate_review
+from run_metrics import baseline_rating, summarize
 
 
 def main():
@@ -15,6 +17,7 @@ def main():
     parser.add_argument('--adapter', help='Local PEFT LoRA directory, trained on the same base')
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--context', type=int, default=8192)
+    parser.add_argument('--rating-only', action='store_true', help='Ask for a numeric review')
     parser.add_argument('--stdio', action='store_true', help='Exchange JSON lines with a parent process')
     parser.add_argument('--check-model', action='store_true', help='Load the model and adapter, then exit')
     args = parser.parse_args()
@@ -39,29 +42,76 @@ def main():
     if args.adapter:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, args.adapter, local_files_only=True)
+    mode_path = Path(args.adapter) / "coach_mode.json" if args.adapter else None
+    mode = json.loads(mode_path.read_text(encoding="utf-8")) if mode_path and mode_path.is_file() else {}
+    rating_only = args.rating_only or mode.get("rating_only", False)
+    include_summary = not args.adapter or mode.get("run_summary", False)
     model.eval()
     if args.check_model:
         return
     context = min(args.context, getattr(model.config, 'max_position_embeddings', args.context))
     source = 'local LoRA model' if args.adapter else 'local base model (no LoRA adapter)'
 
-    def review(run):
-        if not isinstance(run, dict) or not all(k in run for k in ('inputs','hits','level','duration')):
-            raise ValueError('missing gameplay data')
-        prompt = tokenizer.apply_chat_template(messages(run), tokenize=False, add_generation_prompt=True)
+    def generate(run, score_only, condensed=False):
+        chat = messages(run, rating_only=score_only, include_summary=include_summary, condensed=condensed)
+        prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+        max_output = 48 if score_only else 650
         tokens = tokenizer(prompt, return_tensors='pt', add_special_tokens=False).to(device)
-        if tokens.input_ids.shape[1] + 650 > context:
-            raise ValueError('Full replay exceeds context. Use a larger context/model; replay was not truncated.')
+        prompt_limit = min(context, mode.get("condense_context", context))
+        if tokens.input_ids.shape[1] + max_output > prompt_limit:
+            return None
         with torch.inference_mode():
-            output = model.generate(**tokens, max_new_tokens=650, do_sample=False,
+            output = model.generate(**tokens, max_new_tokens=max_output, do_sample=False,
                                     pad_token_id=tokenizer.eos_token_id)
         raw = tokenizer.decode(output[0, tokens.input_ids.shape[1]:], skip_special_tokens=True).strip()
-        # Permit a markdown fence, but never silently repair gameplay geometry.
-        if raw.startswith('```'):
+        if raw.startswith('```') and '\n' in raw:
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0].strip()
-        result = validate_review(json.loads(raw))
-        result['source'] = source
-        return result
+        return raw
+
+    def rubric_review(run, notice):
+        return {'rating': baseline_rating(summarize(run)), 'source': 'gameplay rubric',
+                'notice': notice}
+
+    def review(run):
+        required = ('inputs', 'hits', 'level', 'duration', 'completed')
+        if not isinstance(run, dict) or not all(key in run for key in required):
+            raise ValueError('missing gameplay data')
+
+        condensed = False
+        raw = generate(run, rating_only)
+        if raw is None and "condense_context" in mode:
+            condensed = True
+            raw = generate(run, rating_only, condensed=True)
+        if raw is None:
+            return rubric_review(run, 'The full replay exceeded the model input limit. Scored using the gameplay rubric.')
+
+        summary_notice = "The coach rated this long replay using its input summary." if condensed else None
+        try:
+            decoded = json.loads(raw)
+            if rating_only and type(decoded) is int:
+                decoded = {'rating': decoded}
+            result = validate_rating(decoded)
+        except (ValueError, TypeError):
+            if not rating_only:
+                retry = generate(run, True, condensed=condensed)
+                try:
+                    score = json.loads(retry) if retry else None
+                    result = validate_rating({'rating': score} if type(score) is int else score)
+                    return dict(result, source=source,
+                                notice=summary_notice or 'The first model reply was invalid. The coach retried for a rating.')
+                except (ValueError, TypeError):
+                    pass
+            return rubric_review(run, 'The model did not return a valid rating. Scored using the gameplay rubric.')
+
+        if not rating_only:
+            try:
+                result = validate_review(decoded)
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                return dict(result, source=source,
+                            notice=f'{summary_notice or "The coach rated the run."} Its proposed level was rejected: {error}.')
+        if summary_notice:
+            return dict(result, source=source, notice=summary_notice)
+        return dict(result, source=source)
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, code, value):

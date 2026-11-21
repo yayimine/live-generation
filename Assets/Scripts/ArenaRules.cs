@@ -60,12 +60,13 @@ namespace CubeCoachGame
 
         internal static bool IsValidReview(Review review)
         {
-            if (review == null || review.rating < 1 || review.rating > 10 ||
-                string.IsNullOrWhiteSpace(review.feedback))
+            if (review == null || review.rating < 1 || review.rating > 10)
                 return false;
 
             var level = review.nextLevel;
-            if (level == null || string.IsNullOrWhiteSpace(level.title) ||
+            if (level == null)
+                return string.IsNullOrWhiteSpace(review.feedback);
+            if (string.IsNullOrWhiteSpace(review.feedback) || string.IsNullOrWhiteSpace(level.title) ||
                 string.IsNullOrWhiteSpace(level.description) || !IsFinite(level.seconds) ||
                 level.seconds < 15 || level.seconds > 90 ||
                 level.goals == null || level.goals.Length < 1 || level.goals.Length > 8)

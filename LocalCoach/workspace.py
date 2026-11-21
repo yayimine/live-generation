@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
-from protocol import validate_review
+from protocol import validate_rating, validate_review
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -66,19 +66,11 @@ def main():
         print(json.dumps(run, indent=2))
         print("Read the scoring rubric in WINDOWS-TRAINING.md. Enter a review grounded in this run.")
         rating = int(input("Rating (1-10): "))
-        feedback = input("Feedback: ")
-        title = input("Next level title: ")
-        description = input("Next level description: ")
-        seconds = float(input("Next level seconds (15-90): "))
-        goals = json.loads(input('Goal coordinates, e.g. [{"x":-5,"y":3},{"x":5,"y":-3}]: '))
-        review = validate_review(dict(rating=rating, feedback=feedback, nextLevel=dict(
-            title=title, description=description, seconds=seconds, goals=goals)))
-        split = input("Split (train/test): ").strip()
+        review = validate_rating({"rating": rating})
+        split = input("Split (train/test) [train]: ").strip() or "train"
         if split not in ("train", "test"):
             parser.error("Choose train or test.")
-        session = input("Player/session group (keep the same group in one split): ").strip()
-        if not session:
-            parser.error("A group is required.")
+        session = input("Player/session group (optional): ").strip()
         target = labels / path.name
         if target.exists() and input("Replace existing label? (yes/no): ") != "yes":
             return
@@ -94,17 +86,17 @@ def main():
             if run["id"] in seen:
                 parser.error("Duplicate run ID")
             seen.add(run["id"])
-            split, group = label["split"], label["group"]
-            if split not in datasets or not group:
+            split, group = label["split"], label.get("group", "")
+            if split not in datasets:
                 parser.error(f"Invalid split or group in {path}")
-            if groups.setdefault(group, split) != split:
+            if group and groups.setdefault(group, split) != split:
                 parser.error(f"Group {group} appears in both splits.")
             review = validate_review(label["review"])
             datasets[split].append(json.dumps(dict(run=run, review=review), allow_nan=False))
-        if any(not rows for rows in datasets.values()):
-            parser.error("Label at least one run in each split before exporting.")
+        if not datasets["train"]:
+            parser.error("Rate at least one training run before exporting.")
         for split, rows in datasets.items():
-            (DATA / f"{split}.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            (DATA / f"{split}.jsonl").write_text("".join(row + "\n" for row in rows), encoding="utf-8")
             print(f"{split}: {len(rows)} runs")
 
 

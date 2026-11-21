@@ -71,8 +71,10 @@ Collect varied, carefully rated examples and evaluate held-out runs before
 claiming improved coaching. Automatic self-labeling is not training evidence.
 No model or adapter has been trained or benchmarked as part of this prototype.
 
-All input events are sent to the model; oversized contexts are rejected rather
-than silently truncated. Generation is capped at 650 new tokens. Invalid JSON,
+The coach sends the full replay when it fits. Training uses aggregate input
+times, the hit timeline, and run statistics when a replay exceeds its context.
+New adapters use that same format for long runs and identify it in the result.
+The original replay stays intact. Invalid JSON,
 out-of-bounds, overlapping, or spawn-adjacent goals are rejected with a retry
 option. The game places isolated blocks after validating the goal coordinates and records
 the block centers with the replay. Older replays may omit obstacles.

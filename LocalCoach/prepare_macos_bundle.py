@@ -46,7 +46,7 @@ def main():
                         '-r', str(root / 'requirements.txt')], check=True)
         # Console scripts installed by uv can contain absolute shebangs. The game only imports packages.
         shutil.rmtree(runtime / 'packages/bin', ignore_errors=True)
-        for filename in ('server.py', 'protocol.py'):
+        for filename in ('server.py', 'protocol.py', 'run_metrics.py'):
             shutil.copy2(root / filename, runtime)
         for name, source in (('model', args.model), ('adapter', args.adapter)):
             shutil.copytree(source, runtime / name,

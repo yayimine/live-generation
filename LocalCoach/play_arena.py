@@ -7,6 +7,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -194,10 +195,18 @@ class PlayArena:
                 if error:
                     self.feedback.replace(error)
                 else:
-                    self.next_level = result["nextLevel"]
-                    self.feedback.replace(f"{result['rating']}/10 · {result['feedback']}\n"
-                                      f"{self.next_level['title']} · {self.next_level['description']}")
-                    self.next_button.configure(state="normal")
+                    self.next_level = result.get("nextLevel")
+                    summary = f"{result['rating']}/10"
+                    if result.get("source") == "gameplay rubric":
+                        summary += " · Rubric score"
+                    if result.get("feedback"):
+                        summary += f" · {result['feedback']}"
+                    if result.get("notice"):
+                        summary += f"\n{result['notice']}"
+                    if self.next_level:
+                        summary += f"\n{self.next_level['title']} · {self.next_level['description']}"
+                        self.next_button.configure(state="normal")
+                    self.feedback.replace(summary)
         self.draw()
         self.window.after(16, self.tick)
 
@@ -245,8 +254,17 @@ class PlayArena:
                 with urlopen(request, timeout=180) as response:
                     result = validate_review(json.load(response))
                 self.replies.put((result, None))
+            except HTTPError as error:
+                try:
+                    with error:
+                        detail = json.load(error).get("error") or error.reason
+                except (ValueError, OSError, AttributeError):
+                    detail = error.reason
+                self.replies.put((None, f"Coach could not review this run ({error.code}). {detail}"))
+            except URLError as error:
+                self.replies.put((None, f"Could not connect to the local coach. Start it in Studio. {error.reason}"))
             except (OSError, ValueError, KeyError, TypeError) as error:
-                self.replies.put((None, f"Coach review unavailable. Start the coach in Studio and retry. {error}"))
+                self.replies.put((None, f"Coach review unavailable. {error}"))
 
         threading.Thread(target=request_review, daemon=True).start()
 

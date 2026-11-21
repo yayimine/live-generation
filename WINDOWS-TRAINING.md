@@ -148,7 +148,7 @@ Look for `adapter_config.json` and `adapter_model.safetensors`. After the pilot 
 & $Py .\train_lora.py --model $Model --data .\data\train.jsonl --output .\adapters\cube-coach-v1 --epochs 3 --context 4096
 ```
 
-If a replay exceeds the context, keep the original intact and either raise `--context` within the model and device limits or separate that replay from this training batch. If CUDA runs out of memory, close other GPU workloads and pilot on short runs with a smaller context. Batch size is already one. A falling training loss is a diagnostic. Use held-out reviews to judge quality.
+If a replay exceeds the context, the trainer uses its input summary and logs the run ID. The original replay stays intact. Increase `--context` within the model and device limits if even the summary is too long. If CUDA runs out of memory, close other GPU workloads and pilot on short runs with a smaller context. Batch size is already one. A falling training loss is a diagnostic. Use held-out reviews to judge quality.
 
 ## 7. Compare the base model and adapter
 
